@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LogSentinel — Real-time Attack Detection Dashboard</title>
+  <meta name="description" content="Real-time web server log monitoring dashboard with ML-powered attack detection for SOC analysts and security researchers." />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['JetBrains Mono', 'monospace'],
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            cyber: {
+              bg:      '#050a0f',
+              surface: '#0a1520',
+              panel:   '#0f1e2d',
+              border:  '#1a3a5c',
+              accent:  '#00d4ff',
+              green:   '#00ff88',
+              red:     '#ff2d55',
+              yellow:  '#ffd60a',
+              muted:   '#4a7fa5',
+            },
+          },
+          animation: {
+            'pulse-fast': 'pulse 1s cubic-bezier(0.4,0,0.6,1) infinite',
+            'slide-in':   'slideIn 0.4s ease-out',
+            'flicker':    'flicker 3s linear infinite',
+          },
+          keyframes: {
+            slideIn: {
+              '0%':   { opacity: '0', transform: 'translateY(-8px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            },
+            flicker: {
+              '0%, 95%, 100%': { opacity: '1' },
+              '96%':           { opacity: '0.4' },
+              '98%':           { opacity: '0.9' },
+            },
+          },
+          boxShadow: {
+            'neon-blue': '0 0 12px rgba(0, 212, 255, 0.35)',
+            'neon-green':'0 0 12px rgba(0, 255, 136, 0.35)',
+            'neon-red':  '0 0 16px rgba(255, 45, 85, 0.45)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* ── Global Reset & Base ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      background-color: #050a0f;
+      color: #a8c8e8;
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Subtle animated grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Radial glow at the top */
+    body::after {
+      content: '';
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(0, 212, 255, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Scrollbar ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #050a0f; }
+    ::-webkit-scrollbar-thumb { background: #1a3a5c; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #00d4ff; }
+
+    /* ── Metric Card ─────────────────────────────────────────── */
+    .metric-card {
+      background: linear-gradient(135deg, #0a1520 0%, #0f1e2d 100%);
+      border: 1px solid #1a3a5c;
+      border-radius: 12px;
+      padding: 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+    }
+    .metric-card.blue::before  { background: linear-gradient(90deg, transparent, #00d4ff, transparent); }
+    .metric-card.green::before { background: linear-gradient(90deg, transparent, #00ff88, transparent); }
+    .metric-card.red::before   { background: linear-gradient(90deg, transparent, #ff2d55, transparent); }
+    .metric-card.yellow::before{ background: linear-gradient(90deg, transparent, #ffd60a, transparent); }
+
+    .metric-card:hover {
+      border-color: rgba(0, 212, 255, 0.4);
+      box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);
+    }
+
+    /* ── Table ───────────────────────────────────────────────── */
+    #log-table-body tr {
+      animation: slideIn 0.4s ease-out;
+      border-bottom: 1px solid rgba(26, 58, 92, 0.5);
+      transition: background-color 0.2s ease;
+    }
+    #log-table-body tr:hover {
+      background-color: rgba(0, 212, 255, 0.05) !important;
+    }
+
+    .row-attack {
+      background-color: rgba(255, 45, 85, 0.07);
+    }
+    .row-normal {
+      background-color: transparent;
+    }
+
+    /* ── Status Badge ────────────────────────────────────────── */
+    .badge-attack {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255, 45, 85, 0.15);
+      border: 1px solid rgba(255, 45, 85, 0.5);
+      color: #ff2d55;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      box-shadow: 0 0 10px rgba(255, 45, 85, 0.3);
+      animation: pulse-fast 1.2s ease-in-out infinite;
+    }
+    .badge-normal {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      color: #00ff88;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ── Status Indicator ────────────────────────────────────── */
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-live   { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
+    .dot-dead   { background: #ff2d55; box-shadow: 0 0 6px #ff2d55; }
+    .dot-warn   { background: #ffd60a; box-shadow: 0 0 6px #ffd60a; }
+
+    /* ── Glow Text ───────────────────────────────────────────── */
+    .text-glow-cyan  { text-shadow: 0 0 10px rgba(0, 212, 255, 0.6); }
+    .text-glow-green { text-shadow: 0 0 10px rgba(0, 255, 136, 0.6); }
+    .text-glow-red   { text-shadow: 0 0 10px rgba(255, 45, 85, 0.6); }
+
+    /* ── Monospace cells ─────────────────────────────────────── */
+    .cell-mono { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+    .cell-payload {
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+    }
+
+    /* ── Scan line effect on table ───────────────────────────── */
+    .scanline-wrapper {
+      position: relative;
+      overflow: hidden;
+    }
+    .scanline-wrapper::after {
+      content: '';
+      position: absolute;
+      top: -100%;
+      left: 0; right: 0;
+      height: 6px;
+      background: linear-gradient(transparent, rgba(0, 212, 255, 0.06), transparent);
+      animation: scan 4s linear infinite;
+      pointer-events: none;
+      z-index: 1;
+    }
+    @keyframes scan {
+      0%   { top: -10%; }
+      100% { top: 110%; }
+    }
+
+    /* ── Connection status bar ───────────────────────────────── */
+    #conn-bar {
+      transition: background-color 0.4s ease;
+    }
+
+    /* ── Attack flash overlay ────────────────────────────────── */
+    #attack-flash {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 45, 85, 0.06);
+      opacity: 0;
+      z-index: 999;
+      transition: opacity 0.15s ease;
+    }
+
+    /* ── Chart bars ──────────────────────────────────────────── */
+    .ratio-bar {
+      transition: width 0.6s ease;
+    }
+  </style>
+</head>
+
+<body class="relative z-10">
+
+  <!-- Attack Flash Overlay -->
+  <div id="attack-flash"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       HEADER
+  ═══════════════════════════════════════════════════════════ -->
+  <header class="relative z-20 border-b border-cyber-border bg-cyber-surface/80 backdrop-blur-sm sticky top-0">
+    <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between">
+      <!-- Logo -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-neon-blue">
+          <svg viewBox="0 0 24 24" fill="none" class="w-5 h-5 text-white" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-white tracking-wide font-mono text-glow-cyan">
+            LogSentinel
+          </h1>
+          <p class="text-xs text-cyber-muted -mt-0.5">Obfuscated Payload Detector v1.0</p>
+        </div>
+      </div>
+
+      <!-- Connection Status -->
+      <div id="conn-bar" class="flex items-center gap-4">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyber-panel border border-cyber-border text-xs">
+          <span id="conn-dot" class="dot dot-warn"></span>
+          <span id="conn-text" class="font-mono text-yellow-400">Connecting…</span>
+        </div>
+        <div class="hidden md:flex items-center gap-2 text-xs text-cyber-muted font-mono">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span id="clock-display">--:--:--</span>
+        </div>
+        <button
+          id="clear-btn"
+          class="px-3 py-1.5 rounded-lg bg-cyber-panel border border-cyber-border text-cyber-muted hover:text-cyber-accent hover:border-cyber-accent text-xs font-medium transition-all duration-200"
+        >⌫ Clear</button>
+        <button
+          id="pause-btn"
+          class="px-3 py-1.5 rounded-lg bg-cyber-panel border border-cyber-border text-cyber-muted hover:text-cyber-accent hover:border-cyber-accent text-xs font-medium transition-all duration-200"
+        >⏸ Pause</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       MAIN CONTENT
+  ═══════════════════════════════════════════════════════════ -->
+  <main class="max-w-screen-2xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- ── Metric Cards ─────────────────────────────────────── -->
+    <section aria-label="Dashboard Metrics" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+      <!-- Total Requests -->
+      <div class="metric-card blue" id="card-total">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-cyber-muted font-semibold mb-1">Total Requests</p>
+            <p id="metric-total" class="text-4xl font-bold text-white text-glow-cyan font-mono">0</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-cyber-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+          </div>
+        </div>
+        <p class="text-xs text-cyber-muted mt-3">Cumulative log entries</p>
+      </div>
+
+      <!-- Attacks Blocked -->
+      <div class="metric-card red" id="card-attacks">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-cyber-muted font-semibold mb-1">Attacks Detected</p>
+            <p id="metric-attacks" class="text-4xl font-bold text-cyber-red text-glow-red font-mono">0</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-cyber-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+          </div>
+        </div>
+        <p class="text-xs text-cyber-muted mt-3">Malicious payloads flagged</p>
+      </div>
+
+      <!-- Normal / Bypassed -->
+      <div class="metric-card green" id="card-normal">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-cyber-muted font-semibold mb-1">Normal Traffic</p>
+            <p id="metric-normal" class="text-4xl font-bold text-cyber-green text-glow-green font-mono">0</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-cyber-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+            </svg>
+          </div>
+        </div>
+        <p class="text-xs text-cyber-muted mt-3">Benign requests passed</p>
+      </div>
+
+      <!-- Attack Rate -->
+      <div class="metric-card yellow" id="card-rate">
+        <div class="flex items-start justify-between">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-cyber-muted font-semibold mb-1">Attack Rate</p>
+            <p id="metric-rate" class="text-4xl font-bold text-yellow-400 font-mono">0%</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+          </div>
+        </div>
+        <!-- Mini ratio bar -->
+        <div class="mt-3 h-1.5 rounded-full bg-cyber-border overflow-hidden">
+          <div id="ratio-bar" class="ratio-bar h-full rounded-full bg-gradient-to-r from-green-500 to-red-500" style="width:0%"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Live Feed Table ───────────────────────────────────── -->
+    <section aria-label="Live Log Feed" class="scanline-wrapper rounded-xl border border-cyber-border overflow-hidden bg-cyber-surface/60 backdrop-blur-sm">
+      <!-- Table Header Bar -->
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between px-5 py-3 border-b border-cyber-border gap-3">
+        <div class="flex items-center gap-3">
+          <span class="dot dot-warn animate-pulse" id="feed-dot"></span>
+          <h2 class="text-sm font-semibold text-white tracking-wide">Live Threat Feed</h2>
+          <span id="row-count-badge" class="px-2 py-0.5 rounded-full bg-cyber-border text-xs font-mono text-cyber-muted">0 events</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs text-cyber-muted font-mono">
+          <span>Source: access.log</span>
+          <span class="text-cyber-border">│</span>
+          <span>Model: Random Forest + TF-IDF</span>
+          <span class="text-cyber-border">│</span>
+          <span id="last-seen">Last: —</span>
+        </div>
+      </div>
+
+      <!-- Scrollable Table Wrapper -->
+      <div class="overflow-auto max-h-[60vh]">
+        <table class="w-full text-sm border-collapse">
+          <thead class="sticky top-0 z-10">
+            <tr class="bg-cyber-panel text-cyber-muted text-xs uppercase tracking-widest">
+              <th class="text-left px-4 py-3 font-semibold w-8">#</th>
+              <th class="text-left px-4 py-3 font-semibold">Timestamp</th>
+              <th class="text-left px-4 py-3 font-semibold">Source IP</th>
+              <th class="text-left px-4 py-3 font-semibold">Payload / URI</th>
+              <th class="text-left px-4 py-3 font-semibold">Status</th>
+              <th class="text-left px-4 py-3 font-semibold">Risk</th>
+            </tr>
+          </thead>
+          <tbody id="log-table-body">
+            <!-- Rows injected by JS -->
+            <tr id="empty-row">
+              <td colspan="6" class="text-center py-16 text-cyber-muted font-mono text-sm">
+                <div class="flex flex-col items-center gap-3 opacity-50">
+                  <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                  </svg>
+                  <p>Waiting for log events…</p>
+                  <p class="text-xs">Write entries to access.log to begin monitoring</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Table Footer -->
+      <div class="flex items-center justify-between px-5 py-2.5 border-t border-cyber-border bg-cyber-panel/40 text-xs font-mono text-cyber-muted">
+        <span>Max displayed: <span id="max-rows-display">500</span> rows (FIFO)</span>
+        <span>🔒 All analysis is performed server-side · Data never leaves your network</span>
+      </div>
+    </section>
+
+    <!-- ── Recent Attacks Panel ──────────────────────────────── -->
+    <section class="grid md:grid-cols-2 gap-4">
+
+      <!-- Last 5 attacks -->
+      <div class="rounded-xl border border-cyber-border bg-cyber-surface/60 backdrop-blur-sm overflow-hidden">
+        <div class="flex items-center gap-2 px-5 py-3 border-b border-cyber-border">
+          <span class="w-2 h-2 rounded-full bg-cyber-red animate-pulse"></span>
+          <h3 class="text-sm font-semibold text-white">Recent Threats</h3>
+        </div>
+        <ul id="recent-attacks" class="divide-y divide-cyber-border/40 max-h-60 overflow-auto">
+          <li class="px-5 py-4 text-xs text-cyber-muted font-mono opacity-50 text-center">No threats detected yet</li>
+        </ul>
+      </div>
+
+      <!-- Threat Log Legend + Tips -->
+      <div class="rounded-xl border border-cyber-border bg-cyber-surface/60 backdrop-blur-sm overflow-hidden">
+        <div class="flex items-center gap-2 px-5 py-3 border-b border-cyber-border">
+          <span class="w-2 h-2 rounded-full bg-cyber-accent"></span>
+          <h3 class="text-sm font-semibold text-white">Detection Info</h3>
+        </div>
+        <div class="px-5 py-4 space-y-3 text-xs">
+          <div class="flex items-start gap-3">
+            <span class="badge-attack shrink-0 mt-0.5">Attack</span>
+            <p class="text-cyber-muted">ML model classified the URI as a malicious payload — potential SQLi, XSS, path traversal, or command injection.</p>
+          </div>
+          <div class="flex items-start gap-3">
+            <span class="badge-normal shrink-0 mt-0.5">Normal</span>
+            <p class="text-cyber-muted">URI classified as benign traffic by the Random Forest classifier and TF-IDF feature extractor.</p>
+          </div>
+          <hr class="border-cyber-border" />
+          <div class="space-y-1.5 text-cyber-muted leading-relaxed">
+            <p><span class="text-cyber-accent font-semibold">Model:</span> Random Forest (rf_model.pkl)</p>
+            <p><span class="text-cyber-accent font-semibold">Features:</span> TF-IDF vectorisation on URI tokens</p>
+            <p><span class="text-cyber-accent font-semibold">Log format:</span> Apache/Nginx Combined Log Format</p>
+            <p><span class="text-yellow-400 font-semibold">Demo mode:</span> Heuristic fallback active if model not found</p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       FOOTER
+  ═══════════════════════════════════════════════════════════ -->
+  <footer class="mt-8 border-t border-cyber-border py-4">
+    <p class="text-center text-xs font-mono text-cyber-muted">
+      LogSentinel &copy; 2026 · Ethical Hacking Final Project · Built with FastAPI + Scikit-Learn + WebSockets
+    </p>
+  </footer>
+
+
+  <!-- ═══════════════════════════════════════════════════════════
+       JAVASCRIPT — WebSocket Client & Dashboard Logic
+  ═══════════════════════════════════════════════════════════ -->
+  <script>
+  (() => {
+    'use strict';
+
+    // ── Config ─────────────────────────────────────────────────
+    const WS_URL     = `ws://${location.host}/ws`;
+    const MAX_ROWS   = 500;
+    const RECONNECT_DELAY = 3000; // ms
+
+    // ── State ──────────────────────────────────────────────────
+    let totalRequests = 0;
+    let totalAttacks  = 0;
+    let totalNormal   = 0;
+    let rowIndex      = 0;
+    let isPaused      = false;
+    let ws            = null;
+    let recentAttacks = [];
+
+    // ── DOM Refs ───────────────────────────────────────────────
+    const tbody         = document.getElementById('log-table-body');
+    const emptyRow      = document.getElementById('empty-row');
+    const metricTotal   = document.getElementById('metric-total');
+    const metricAttacks = document.getElementById('metric-attacks');
+    const metricNormal  = document.getElementById('metric-normal');
+    const metricRate    = document.getElementById('metric-rate');
+    const ratioBar      = document.getElementById('ratio-bar');
+    const connDot       = document.getElementById('conn-dot');
+    const connText      = document.getElementById('conn-text');
+    const feedDot       = document.getElementById('feed-dot');
+    const rowCountBadge = document.getElementById('row-count-badge');
+    const lastSeen      = document.getElementById('last-seen');
+    const clockDisplay  = document.getElementById('clock-display');
+    const clearBtn      = document.getElementById('clear-btn');
+    const pauseBtn      = document.getElementById('pause-btn');
+    const recentList    = document.getElementById('recent-attacks');
+    const attackFlash   = document.getElementById('attack-flash');
+
+    // ── Clock ──────────────────────────────────────────────────
+    function updateClock() {
+      clockDisplay.textContent = new Date().toLocaleTimeString('id-ID', { hour12: false });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ── Metrics ─────────────────────────────────────────────────
+    function updateMetrics() {
+      metricTotal.textContent   = totalRequests.toLocaleString();
+      metricAttacks.textContent = totalAttacks.toLocaleString();
+      metricNormal.textContent  = totalNormal.toLocaleString();
+
+      const rate = totalRequests > 0
+        ? ((totalAttacks / totalRequests) * 100).toFixed(1)
+        : 0;
+      metricRate.textContent = `${rate}%`;
+      ratioBar.style.width   = `${rate}%`;
+    }
+
+    // ── Recent Attacks Panel ────────────────────────────────────
+    function addRecentAttack(entry) {
+      recentAttacks.unshift(entry);
+      if (recentAttacks.length > 10) recentAttacks.pop();
+
+      recentList.innerHTML = recentAttacks.map(a => `
+        <li class="px-5 py-2.5 hover:bg-red-500/5 transition-colors">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-mono text-red-400 text-xs truncate max-w-[55%]">${escHtml(a.payload)}</span>
+            <span class="text-cyber-muted text-xs shrink-0">${escHtml(a.ip)}</span>
+          </div>
+          <p class="text-cyber-muted font-mono text-xs mt-0.5">${escHtml(a.timestamp)}</p>
+        </li>
+      `).join('');
+    }
+
+    // ── Attack Flash ────────────────────────────────────────────
+    function triggerAttackFlash() {
+      attackFlash.style.opacity = '1';
+      setTimeout(() => { attackFlash.style.opacity = '0'; }, 300);
+    }
+
+    // ── Row Injection ───────────────────────────────────────────
+    function addRow(data) {
+      if (isPaused) return;
+
+      const { timestamp, ip, payload, status } = data;
+      const isAttack = status === 'Attack';
+
+      // Remove empty placeholder
+      if (emptyRow.parentNode === tbody) tbody.removeChild(emptyRow);
+
+      // Build row
+      const tr = document.createElement('tr');
+      tr.className = isAttack ? 'row-attack' : 'row-normal';
+
+      const riskScore = isAttack
+        ? `<span class="text-red-400 font-mono text-xs">⚠ HIGH</span>`
+        : `<span class="text-green-400 font-mono text-xs">✓ LOW</span>`;
+
+      tr.innerHTML = `
+        <td class="px-4 py-2.5 text-cyber-muted font-mono text-xs">${rowIndex}</td>
+        <td class="px-4 py-2.5 cell-mono text-cyber-muted">${escHtml(timestamp)}</td>
+        <td class="px-4 py-2.5 cell-mono ${isAttack ? 'text-red-300' : 'text-cyan-300'}">${escHtml(ip)}</td>
+        <td class="px-4 py-2.5">
+          <span class="cell-payload ${isAttack ? 'text-red-300' : 'text-slate-300'}" title="${escAttr(payload)}">${escHtml(payload)}</span>
+        </td>
+        <td class="px-4 py-2.5">
+          ${isAttack
+            ? '<span class="badge-attack"><span class="dot dot-dead shrink-0"></span>Attack</span>'
+            : '<span class="badge-normal"><span class="dot dot-live shrink-0"></span>Normal</span>'}
+        </td>
+        <td class="px-4 py-2.5">${riskScore}</td>
+      `;
+
+      // Prepend (newest at top)
+      tbody.insertBefore(tr, tbody.firstChild);
+      rowIndex++;
+
+      // Trim FIFO
+      while (tbody.rows.length > MAX_ROWS) tbody.deleteRow(tbody.rows.length - 1);
+
+      // Update counters
+      totalRequests++;
+      if (isAttack) {
+        totalAttacks++;
+        addRecentAttack(data);
+        triggerAttackFlash();
+      } else {
+        totalNormal++;
+      }
+
+      updateMetrics();
+      rowCountBadge.textContent = `${tbody.rows.length.toLocaleString()} events`;
+      lastSeen.textContent = `Last: ${timestamp}`;
+    }
+
+    // ── HTML Escaping ───────────────────────────────────────────
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+    function escAttr(str) {
+      return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // ── WebSocket ───────────────────────────────────────────────
+    function connect() {
+      setConnStatus('connecting');
+
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        setConnStatus('live');
+        // Heartbeat ping every 25s
+        ws._pingTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        }, 25000);
+      };
+
+      ws.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); }
+        catch { return; }
+
+        // Ignore handshake / pong frames
+        if (data.type === 'connected' || data.type === 'pong') return;
+
+        // Validate required fields
+        if (!data.timestamp || !data.ip || !data.payload || !data.status) return;
+
+        addRow(data);
+      };
+
+      ws.onerror = () => { /* onclose will handle reconnect */ };
+
+      ws.onclose = () => {
+        clearInterval(ws._pingTimer);
+        setConnStatus('dead');
+        setTimeout(connect, RECONNECT_DELAY);
+      };
+    }
+
+    function setConnStatus(state) {
+      const configs = {
+        connecting: { dotClass: 'dot dot-warn', textClass: 'text-yellow-400', text: 'Connecting…',  feedDotClass: 'dot dot-warn animate-pulse' },
+        live:       { dotClass: 'dot dot-live', textClass: 'text-green-400',  text: '⬤ Stream Live', feedDotClass: 'dot dot-live animate-pulse' },
+        dead:       { dotClass: 'dot dot-dead', textClass: 'text-red-400',    text: 'Disconnected — retrying', feedDotClass: 'dot dot-dead' },
+      };
+      const cfg = configs[state];
+      connDot.className = cfg.dotClass;
+      connText.className = `font-mono text-xs ${cfg.textClass}`;
+      connText.textContent = cfg.text;
+      feedDot.className = cfg.feedDotClass;
+    }
+
+    // ── Controls ────────────────────────────────────────────────
+    clearBtn.addEventListener('click', () => {
+      tbody.innerHTML = '';
+      tbody.appendChild(emptyRow);
+      totalRequests = totalAttacks = totalNormal = rowIndex = 0;
+      recentAttacks = [];
+      recentList.innerHTML = '<li class="px-5 py-4 text-xs text-cyber-muted font-mono opacity-50 text-center">No threats detected yet</li>';
+      rowCountBadge.textContent = '0 events';
+      lastSeen.textContent = 'Last: —';
+      updateMetrics();
+    });
+
+    pauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused;
+      pauseBtn.textContent  = isPaused ? '▶ Resume' : '⏸ Pause';
+      pauseBtn.classList.toggle('text-cyber-accent', isPaused);
+      pauseBtn.classList.toggle('border-cyber-accent', isPaused);
+    });
+
+    // ── Boot ────────────────────────────────────────────────────
+    connect();
+
+  })();
+  </script>
+</body>
+</html>
