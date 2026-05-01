@@ -6,7 +6,7 @@
 
 ## 📋 Deskripsi
 
-Dashboard ini memantau file `access.log` (format Apache/Nginx Combined Log) secara real-time dan mengklasifikasikan setiap request HTTP sebagai **Normal** atau **Attack** menggunakan model Machine Learning yang telah dilatih sebelumnya. Hasil klasifikasi langsung ditampilkan di browser melalui **WebSocket**.
+Dashboard ini memantau file `/var/log/apache2/access.log` (log Apache2 sebenarnya) secara real-time dan mengklasifikasikan setiap request HTTP sebagai **Normal** atau **Attack** menggunakan model Machine Learning yang telah dilatih sebelumnya. Hasil klasifikasi langsung ditampilkan di browser melalui **WebSocket**.
 
 ### Jenis Serangan yang Dideteksi:
 - 💉 **SQL Injection** (SQLi)
@@ -207,14 +207,47 @@ sudo systemctl start logmonitor
 sudo systemctl status logmonitor
 ```
 
-### Integrasi Log Nginx/Apache Asli
+### Integrasi Log Apache2 Langsung
+
+Program sudah dikonfigurasi untuk membaca langsung dari `/var/log/apache2/access.log`.
+
+**Cara menjalankan:**
 
 ```bash
-# Symlink ke log Nginx asli
-ln -s /var/log/nginx/access.log /home/user/ProjectUas/access.log
+# Jalankan dengan sudo (diperlukan untuk akses log Apache2)
+sudo python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-> Pastikan user punya izin baca log: `sudo usermod -aG adm user`
+**Atau berikan permission ke user:**
+
+```bash
+# Tambahkan user ke group adm untuk baca log
+sudo usermod -aG adm $USER
+
+# Logout & login kembali agar perubahan aktif
+# Atau gunakan: newgrp adm
+
+# Verifikasi izin akses
+ls -la /var/log/apache2/access.log
+```
+
+**Jika menggunakan Systemd Service:**
+
+Edit file service agar berjalan dengan privilege yang cukup:
+
+```ini
+[Service]
+...
+User=root
+# atau
+SupplementaryGroups=adm
+```
+
+> **Catatan:** Jika Apache2 tidak berjalan atau log kosong, pastikan Apache2 sudah menerima request dengan menjalankan:
+> ```bash
+> curl http://localhost/
+> # atau lihat log dengan: tail -f /var/log/apache2/access.log
+> ```
 
 ### Konfigurasi Nginx (Reverse Proxy + WebSocket)
 

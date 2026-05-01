@@ -32,7 +32,7 @@ logger = logging.getLogger("log_monitor")
 # ─────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────
-LOG_FILE = Path("access.log")
+LOG_FILE = Path("/var/log/apache2/access.log")
 MODEL_PATH = Path("rf_model.pkl")
 VECTORIZER_PATH = Path("tfidf.pkl")
 POLL_INTERVAL = 0.3  # seconds between file stat checks
@@ -219,7 +219,7 @@ def parse_log_line(line: str) -> Optional[dict]:
 # ─────────────────────────────────────────────
 async def tail_log_file() -> None:
     """
-    Continuously monitor access.log for new lines and broadcast
+    Continuously monitor Apache2 access.log for new lines and broadcast
     parsed + classified entries to all connected WebSocket clients.
 
     Behaviour mirrors `tail -f`: tracks the file position across
@@ -227,8 +227,21 @@ async def tail_log_file() -> None:
     """
     logger.info(f"Starting log tailer on '{LOG_FILE}' …")
 
-    # Ensure the log file exists
-    LOG_FILE.touch(exist_ok=True)
+    # Check if the log file exists and is readable
+    if not LOG_FILE.exists():
+        logger.error(
+            f"❌ Log file '{LOG_FILE}' not found.\n"
+            "Please ensure Apache2 is running and the file exists.\n"
+            "If permission denied, run the app with sudo or adjust file permissions."
+        )
+        return
+
+    if not os.access(LOG_FILE, os.R_OK):
+        logger.error(
+            f"❌ Permission denied reading '{LOG_FILE}'.\n"
+            "Try running with: sudo python main.py"
+        )
+        return
 
     file_pos: int = LOG_FILE.stat().st_size  # start at the end (live tail)
     file_inode: int = LOG_FILE.stat().st_ino
